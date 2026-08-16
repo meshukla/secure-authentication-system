@@ -300,16 +300,12 @@ Future Improvements
 
 I want to improve this project further by adding:
 
-- Better request validation
-- Authentication middleware
-- More complete rate limiting
-- Automated tests
-- Better error handling
-- API documentation
-- More security logging
-- Redis for some authentication-related use cases
-- A frontend for interacting with the API
-
+- Use Redis for OTP storage and expiry
+- Add Google OAuth2 login
+- Build a frontend for the authentication system
+- Add authentication middleware for protected routes
+- Improve overall security
+- Add better rate limiting for authentication and OTP endpoints
 Author
 
 Meet Shukla
