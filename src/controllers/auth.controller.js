@@ -63,10 +63,12 @@ async function userRegister(req, res) {
             )
         });
 
+        const otpTextContent = `Your OTP is ${otp}. This OTP is valid for 10 minutes. Do not share it with anyone.`;
+
         await sendEmail.sendEmail(
             user.email,
             "Verify your email",
-            "",
+            otpTextContent,
             otpHtmlContent
         );
 
@@ -547,12 +549,14 @@ async function forgotPassword(req, res) {
 
         const otpHtmlContent = await OtpHtml(otp);
 
-        await sendEmail.sendEmail(
-            user.email,
-            "Reset Password OTP",
-            "",
-            otpHtmlContent
-        );
+        const otpTextContent = `Your password reset OTP is ${otp}. This OTP is valid for 10 minutes. Do not share it with anyone.`;
+
+await sendEmail.sendEmail(
+    user.email,
+    "Reset Password OTP",
+    otpTextContent,
+    otpHtmlContent
+);
 
         return res.status(200).json({
             message: "OTP sent successfully"
