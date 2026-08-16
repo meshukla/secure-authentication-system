@@ -127,7 +127,7 @@ async function userLogin(req, res) {
                 id: user._id,
                 sessionId: sessionId.toString()
             },
-            process.env.JWT_SECRET,
+            process.env.jwt_secret,
             {
                 expiresIn: "7d"
             }
@@ -151,7 +151,7 @@ async function userLogin(req, res) {
                 id: user._id,
                 sessionId: sessionId.toString()
             },
-            process.env.JWT_SECRET,
+            process.env.jwt_secret,
             {
                 expiresIn: "15m"
             }
@@ -206,7 +206,7 @@ async function refreshtoken(req, res) {
         try {
             decoded = jwt.verify(
                 refreshToken,
-                process.env.JWT_SECRET
+                process.env.jwt_secret
             );
         } catch (error) {
             return res.status(401).json({
@@ -230,7 +230,7 @@ async function refreshtoken(req, res) {
                 id: decoded.id,
                 sessionId: decoded.sessionId
             },
-            process.env.JWT_SECRET,
+            process.env.jwt_secret,
             {
                 expiresIn: "7d"
             }
@@ -269,7 +269,7 @@ async function refreshtoken(req, res) {
                 id: decoded.id,
                 sessionId: decoded.sessionId
             },
-            process.env.JWT_SECRET,
+            process.env.jwt_secret,
             {
                 expiresIn: "15m"
             }
@@ -335,7 +335,7 @@ async function logout(req, res) {
         try {
             decoded = jwt.verify(
                 refreshToken,
-                process.env.JWT_SECRET
+                process.env.jwt_secret
             );
         } catch (error) {
             res.clearCookie("accessToken", cookieOptions);
@@ -406,7 +406,7 @@ async function logoutAll(req, res) {
         try {
             decoded = jwt.verify(
                 refreshToken,
-                process.env.JWT_SECRET
+                process.env.jwt_secret
             );
         } catch (error) {
             return res.status(401).json({
