@@ -2,26 +2,24 @@ const mongoose = require('mongoose');
 
 const userSchema = new mongoose.Schema({
     username: {
-        type: String,
-        required: true,
-        unique: true
+        type:String,
+        required: true
     },
 
     email: {
         type: String,
-        required: true,
-        unique: true
+        required: [ true, "Email is required for creating a user" ],
+        trim: true,
+        lowercase: true,
+        match: [ /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/, "Invalid Email address" ],
+        unique: [ true, "Email already exists." ]
     },
 
     password: {
         type: String,
-        required: true
-    },
-
-    role: {
-        type: String,
-        enum: ['user', 'artist'],
-        default: 'user'
+        required: [ true, "Password is required for creating an account" ],
+        minlength: [ 6, "password should contain more than 6 character" ],
+        select: false
     },
     verified: {
         type: Boolean,
