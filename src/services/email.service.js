@@ -1,39 +1,40 @@
-const nodemailer = require("nodemailer");
+const { BrevoClient } = require("@getbrevo/brevo");
 const config = require("../config/config");
 
-const transporter = nodemailer.createTransport({
-    service: "gmail",
-    auth:{
-        type: "OAuth2",
-        user: config.GOOGLE_USER,
-        clientId: config.GOOGLE_CLIENT_ID,
-        clientSecret: config.GOOGLE_CLIENT_SECRET,
-        refreshToken: config.GOOGLE_REFRESH_TOKEN
-    }
-})
-transporter.verify((error, success) => {
-  if (error) {
-    console.error('Error connecting to email server:', error);
-  } else {
-    console.log('Email server is ready to send messages');
-  }
+const brevo = new BrevoClient({
+    apiKey: config.BREVO_API_KEY,
 });
 
 const sendEmail = async (to, subject, text, html) => {
-  try {
-    const info = await transporter.sendMail({
-      from: `"Authentication System" <${process.env.GOOGLE_USER}>`, // sender address
-      to, // list of receivers
-      subject, // Subject line
-      text, // plain text body
-      html, // html body
-    });
+    try {
+        const response = await brevo.transactionalEmails.sendTransacEmail({
+            sender: {
+                name: "Your Authentication System",
+                email: config.EMAIL_FROM,
+            },
 
-    console.log('Message sent: %s', info.messageId);
-    console.log('Preview URL: %s', nodemailer.getTestMessageUrl(info));
-  } catch (error) {
-    console.error('Error sending email:', error);
-  }
+            to: [
+                {
+                    email: to,
+                },
+            ],
+
+            subject: subject,
+
+            textContent: text,
+
+            htmlContent: html,
+        });
+
+        console.log("Email sent successfully:", response.messageId);
+
+        return response;
+    } catch (error) {
+        console.error("Brevo email error:", error);
+        throw error;
+    }
 };
 
-module.exports = { transporter , sendEmail };
+module.exports = {
+    sendEmail,
+};

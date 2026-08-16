@@ -1,33 +1,29 @@
 const dotenv = require("dotenv");
+
 dotenv.config();
 
 if (!process.env.MONGO_URI) {
-    throw new Error("MONGO_URI is not defined in environment variables");
+    throw new Error("MONGO_URI is not defined");
 }
 
 if (!process.env.jwt_secret) {
-    throw new Error("JWT_SECRET is not defined in environment variables");
+    throw new Error("jwt_secret is not defined");
 }
-if(!process.env.GOOGLE_CLIENT_ID){
-    throw new Error("GOOGLE_CLIENT_ID is not defined in environment variables");
+
+if (!process.env.BREVO_API_KEY) {
+    throw new Error("BREVO_API_KEY is not defined");
 }
-if(!process.env.GOOGLE_CLIENT_SECRET){
-    throw new Error("GOOGLE_CLIENT_SECRET is not defined in environment variables");
-}
-if(!process.env.GOOGLE_REFRESH_TOKEN){
-    throw new Error("GOOGLE_REFRESH_TOKEN is not defined in environment variables");
-}
-if(!process.env.GOOGLE_USER){
-    throw new Error("GOOGLE_USER is not defined in environment variables");
+
+if (!process.env.EMAIL_FROM) {
+    throw new Error("EMAIL_FROM is not defined");
 }
 
 const config = {
     MONGO_URI: process.env.MONGO_URI,
     JWT_SECRET: process.env.jwt_secret,
-    GOOGLE_CLIENT_ID: process.env.GOOGLE_CLIENT_ID,
-    GOOGLE_CLIENT_SECRET: process.env.GOOGLE_CLIENT_SECRET,
-    GOOGLE_REFRESH_TOKEN: process.env.GOOGLE_REFRESH_TOKEN,
-    GOOGLE_USER: process.env.GOOGLE_USER
-}
+
+    BREVO_API_KEY: process.env.BREVO_API_KEY,
+    EMAIL_FROM: process.env.EMAIL_FROM,
+};
 
 module.exports = config;
