@@ -3,16 +3,25 @@ const jwt = require('jsonwebtoken');
 const bcrypt = require('bcryptjs');
 const sessionModel = require('../models/session.model');
 const crypto = require('crypto');
-const config = require('../config/config');
-const sendEmail = require('../services/email.service')
+const sendEmail = require('../services/email.service');
 const { generateOtp, OtpHtml } = require('../utils/utils.js');
 const OTP = require('../models/otp.model');
+const mongoose = require('mongoose');
+
+const isProduction = process.env.NODE_ENV === "production";
+
+const cookieOptions = {
+    httpOnly: true,
+    secure: isProduction,
+    sameSite: "strict"
+};
 
 async function userRegister(req, res) {
     try {
         const { username, email, password } = req.body;
 
         const existingUsername = await User.findOne({ username });
+
         if (existingUsername) {
             return res.status(400).json({
                 message: "Username already exists"
@@ -20,6 +29,7 @@ async function userRegister(req, res) {
         }
 
         const existingEmail = await User.findOne({ email });
+
         if (existingEmail) {
             return res.status(400).json({
                 message: "Email already exists"
@@ -31,7 +41,7 @@ async function userRegister(req, res) {
         const user = await User.create({
             username,
             email,
-            password: hashedPassword,
+            password: hashedPassword
         });
 
         const otp = await generateOtp();
@@ -60,8 +70,7 @@ async function userRegister(req, res) {
             otpHtmlContent
         );
 
-
-        res.status(201).json({
+        return res.status(201).json({
             message: "User registered successfully",
             user: {
                 id: user._id,
@@ -72,28 +81,30 @@ async function userRegister(req, res) {
         });
 
     } catch (error) {
-        res.status(500).json({
+        return res.status(500).json({
             message: error.message
         });
     }
 }
+
 async function userLogin(req, res) {
     try {
         const { username, email, password } = req.body;
 
         const user = await User.findOne({
             $or: [{ username }, { email }]
-        });
+        }).select("+password");
 
         if (!user) {
             return res.status(404).json({
                 message: "User not found"
             });
         }
+
         if (!user.verified) {
             return res.status(400).json({
                 message: "User Not Verified"
-            })
+            });
         }
 
         const isPasswordMatch = await bcrypt.compare(
@@ -107,11 +118,14 @@ async function userLogin(req, res) {
             });
         }
 
+        const sessionId = new mongoose.Types.ObjectId();
+
         const refreshToken = jwt.sign(
             {
                 id: user._id,
+                sessionId: sessionId.toString()
             },
-            process.env.jwt_secret,
+            process.env.JWT_SECRET,
             {
                 expiresIn: "7d"
             }
@@ -122,7 +136,8 @@ async function userLogin(req, res) {
             .update(refreshToken)
             .digest("hex");
 
-        const session = await sessionModel.create({
+        await sessionModel.create({
+            _id: sessionId,
             user: user._id,
             refreshTokenhash,
             ip: req.ip,
@@ -132,42 +147,48 @@ async function userLogin(req, res) {
         const accessToken = jwt.sign(
             {
                 id: user._id,
-                sessionId: session._id
+                sessionId: sessionId.toString()
             },
-            process.env.jwt_secret,
+            process.env.JWT_SECRET,
             {
                 expiresIn: "15m"
             }
         );
-        res.cookie("accessToken", accessToken, {
-            httpOnly: true,
-            secure: false,          // true in production (HTTPS)
-            sameSite: "strict",
-            maxAge: 15 * 60 * 1000
-        });
 
-        res.cookie("refreshToken", refreshToken, {
-            httpOnly: true,
-            secure: false,
-            sameSite: "strict",
-            maxAge: 7 * 24 * 60 * 60 * 1000
-        });
+        res.cookie(
+            "accessToken",
+            accessToken,
+            {
+                ...cookieOptions,
+                maxAge: 15 * 60 * 1000
+            }
+        );
 
-        res.status(200).json({
+        res.cookie(
+            "refreshToken",
+            refreshToken,
+            {
+                ...cookieOptions,
+                maxAge: 7 * 24 * 60 * 60 * 1000
+            }
+        );
+
+        return res.status(200).json({
             message: "User logged in successfully",
             user: {
                 id: user._id,
                 username: user.username,
-                email: user.email,
+                email: user.email
             }
         });
 
     } catch (error) {
-        res.status(500).json({
+        return res.status(500).json({
             message: error.message
         });
     }
 }
+
 async function refreshtoken(req, res) {
     try {
         const refreshToken = req.cookies.refreshToken;
@@ -178,40 +199,40 @@ async function refreshtoken(req, res) {
             });
         }
 
-        const decoded = jwt.verify(
-            refreshToken,
-            process.env.jwt_secret
-        );
+        let decoded;
+
+        try {
+            decoded = jwt.verify(
+                refreshToken,
+                process.env.JWT_SECRET
+            );
+        } catch (error) {
+            return res.status(401).json({
+                message: "Invalid or expired refresh token"
+            });
+        }
+
+        if (!decoded.id || !decoded.sessionId) {
+            return res.status(401).json({
+                message: "Invalid refresh token"
+            });
+        }
 
         const refreshTokenhash = crypto
             .createHash("sha256")
             .update(refreshToken)
             .digest("hex");
 
-        const session = await sessionModel.findOne({
-            _id: decoded.sessionId,
-            refreshTokenhash,
-            revoked: false
-        });
-
-        if (!session) {
-            return res.status(401).json({
-                message: "Invalid refresh token"
-            });
-        }
-
-        const newAccessToken = jwt.sign(
+        const newRefreshToken = jwt.sign(
             {
                 id: decoded.id,
-                sessionId: session._id
+                sessionId: decoded.sessionId
             },
-            process.env.jwt_secret,
+            process.env.JWT_SECRET,
             {
-                expiresIn: "15m"
+                expiresIn: "7d"
             }
         );
-
-        const newRefreshToken = crypto.randomBytes(64).toString("hex");
 
         const newRefreshTokenhash = crypto
             .createHash("sha256")
@@ -220,7 +241,8 @@ async function refreshtoken(req, res) {
 
         const updatedSession = await sessionModel.findOneAndUpdate(
             {
-                _id: session._id,
+                _id: decoded.sessionId,
+                user: decoded.id,
                 refreshTokenhash,
                 revoked: false
             },
@@ -240,31 +262,47 @@ async function refreshtoken(req, res) {
             });
         }
 
-        res.cookie("accessToken", newAccessToken, {
-            httpOnly: true,
-            secure: false,
-            sameSite: "strict",
-            maxAge: 15 * 60 * 1000
-        });
+        const newAccessToken = jwt.sign(
+            {
+                id: decoded.id,
+                sessionId: decoded.sessionId
+            },
+            process.env.JWT_SECRET,
+            {
+                expiresIn: "15m"
+            }
+        );
 
-        res.cookie("refreshToken", newRefreshToken, {
-            httpOnly: true,
-            secure: false,
-            sameSite: "strict",
-            maxAge: 7 * 24 * 60 * 60 * 1000
-        });
+        res.cookie(
+            "accessToken",
+            newAccessToken,
+            {
+                ...cookieOptions,
+                maxAge: 15 * 60 * 1000
+            }
+        );
+
+        res.cookie(
+            "refreshToken",
+            newRefreshToken,
+            {
+                ...cookieOptions,
+                maxAge: 7 * 24 * 60 * 60 * 1000
+            }
+        );
 
         return res.status(200).json({
             message: "Access token refreshed successfully"
         });
 
     } catch (error) {
-        return res.status(401).json({
-            message: "Invalid or expired refresh token"
+        return res.status(500).json({
+            message: "Internal server error"
         });
     }
 }
-async function getme(req, res){
+
+async function getme(req, res) {
     try {
         return res.status(200).json({
             message: "User data retrieved successfully",
@@ -276,13 +314,33 @@ async function getme(req, res){
         });
     }
 }
+
 async function logout(req, res) {
     try {
         const refreshToken = req.cookies.refreshToken;
 
         if (!refreshToken) {
-            return res.status(401).json({
-                message: "No refresh token provided"
+            res.clearCookie("accessToken", cookieOptions);
+            res.clearCookie("refreshToken", cookieOptions);
+
+            return res.status(200).json({
+                message: "User already logged out"
+            });
+        }
+
+        let decoded;
+
+        try {
+            decoded = jwt.verify(
+                refreshToken,
+                process.env.JWT_SECRET
+            );
+        } catch (error) {
+            res.clearCookie("accessToken", cookieOptions);
+            res.clearCookie("refreshToken", cookieOptions);
+
+            return res.status(200).json({
+                message: "User already logged out"
             });
         }
 
@@ -291,47 +349,74 @@ async function logout(req, res) {
             .update(refreshToken)
             .digest("hex");
 
-        const session = await sessionModel.findOne({
-            refreshTokenhash,
-            revoked: false
-        });
+        const session = await sessionModel.findOneAndUpdate(
+            {
+                _id: decoded.sessionId,
+                user: decoded.id,
+                refreshTokenhash,
+                revoked: false
+            },
+            {
+                $set: {
+                    revoked: true
+                }
+            },
+            {
+                new: true
+            }
+        );
+
+        res.clearCookie("accessToken", cookieOptions);
+        res.clearCookie("refreshToken", cookieOptions);
 
         if (!session) {
-            return res.status(404).json({
-                message: "Session not found"
+            return res.status(200).json({
+                message: "User already logged out"
             });
         }
 
-        session.revoked = true;
-        await session.save();
-
-        res.clearCookie("accessToken");
-        res.clearCookie("refreshToken");
-
-        res.status(200).json({
+        return res.status(200).json({
             message: "User logged out successfully"
         });
 
     } catch (error) {
-        res.status(500).json({
+        return res.status(500).json({
             message: error.message
         });
     }
 }
+
 async function logoutAll(req, res) {
     try {
         const refreshToken = req.cookies.refreshToken;
 
         if (!refreshToken) {
+            res.clearCookie("accessToken", cookieOptions);
+            res.clearCookie("refreshToken", cookieOptions);
+
             return res.status(401).json({
                 message: "Refresh token required"
             });
         }
 
-        const decoded = jwt.verify(
-            refreshToken,
-            process.env.jwt_secret
-        );
+        let decoded;
+
+        try {
+            decoded = jwt.verify(
+                refreshToken,
+                process.env.JWT_SECRET
+            );
+        } catch (error) {
+            return res.status(401).json({
+                message: "Unauthorized"
+            });
+        }
+
+        if (!decoded.id) {
+            return res.status(401).json({
+                message: "Unauthorized"
+            });
+        }
 
         await sessionModel.updateMany(
             {
@@ -345,217 +430,263 @@ async function logoutAll(req, res) {
             }
         );
 
-        res.clearCookie("accessToken");
-        res.clearCookie("refreshToken");
+        res.clearCookie("accessToken", cookieOptions);
+        res.clearCookie("refreshToken", cookieOptions);
 
         return res.status(200).json({
             message: "Logged out from all devices successfully"
         });
 
     } catch (error) {
-        return res.status(401).json({
-            message: "Unauthorized"
+        return res.status(500).json({
+            message: "Internal server error"
         });
     }
 }
+
 async function verifyEmail(req, res) {
+    try {
+        const { otp, email } = req.body;
 
-    const { otp, email } = req.body;
-    const otpHash = crypto
-        .createHash("sha256")
-        .update(otp)
-        .digest("hex");
-
-    const otpdoc = await OTP.findOne({
-
-        email,
-
-        otpHash,
-
-        purpose: "email_verification",
-
-        expiresAt: {
-            $gt: new Date()
+        if (!otp || !email) {
+            return res.status(400).json({
+                message: "Email and OTP are required"
+            });
         }
-    });
-    if (!otpdoc) {
-        return res.status(400).json({
-            message: "Invalid OTP"
-        })
+
+        const otpHash = crypto
+            .createHash("sha256")
+            .update(otp)
+            .digest("hex");
+
+        const otpdoc = await OTP.findOne({
+            email,
+            otpHash,
+            purpose: "email_verification",
+            expiresAt: {
+                $gt: new Date()
+            }
+        });
+
+        if (!otpdoc) {
+            return res.status(400).json({
+                message: "Invalid OTP"
+            });
+        }
+
+        const user = await User.findByIdAndUpdate(
+            otpdoc.user,
+            {
+                verified: true
+            },
+            {
+                new: true
+            }
+        );
+
+        await OTP.deleteMany({
+            user: otpdoc.user
+        });
+
+        return res.status(200).json({
+            message: "Email verified successfully",
+            user: {
+                id: user._id,
+                username: user.username,
+                email: user.email,
+                verified: true
+            }
+        });
+
+    } catch (error) {
+        return res.status(500).json({
+            message: error.message
+        });
     }
-    const user = await User.findByIdAndUpdate(
-        otpdoc.user,
-        {
-            verified: true
-        },
-        {
-            new: true
-        }
-    );
-    await OTP.deleteMany({
-        user: otpdoc.user
-    })
-    res.status(200).json({
-        message: "Email verified successfully",
-        user: {
-            id: user._id,
-            username: user.username,
-            email: user.email,
-            verified: true
-        }
-    });
 }
+
 async function forgotPassword(req, res) {
+    try {
+        const { email } = req.body;
 
-    const { email } = req.body;
+        if (!email) {
+            return res.status(400).json({
+                message: "Email is required"
+            });
+        }
 
-    const user = await User.findOne({ email });
+        const user = await User.findOne({ email });
 
-    if (!user) {
-        return res.status(404).json({
-            message: "User not found"
+        if (!user) {
+            return res.status(404).json({
+                message: "User not found"
+            });
+        }
+
+        await OTP.deleteMany({
+            user: user._id,
+            purpose: "forgot_password"
+        });
+
+        const otp = await generateOtp();
+
+        const otpHash = crypto
+            .createHash("sha256")
+            .update(otp)
+            .digest("hex");
+
+        await OTP.create({
+            email: user.email,
+            user: user._id,
+            otpHash,
+            purpose: "forgot_password",
+            expiresAt: new Date(
+                Date.now() + 10 * 60 * 1000
+            )
+        });
+
+        const otpHtmlContent = await OtpHtml(otp);
+
+        await sendEmail.sendEmail(
+            user.email,
+            "Reset Password OTP",
+            "",
+            otpHtmlContent
+        );
+
+        return res.status(200).json({
+            message: "OTP sent successfully"
+        });
+
+    } catch (error) {
+        return res.status(500).json({
+            message: error.message
         });
     }
-
-    await OTP.deleteMany({
-        user: user._id,
-        purpose: "forgot_password"
-    });
-
-    const otp = await generateOtp();
-
-    const otpHash = crypto
-        .createHash("sha256")
-        .update(otp)
-        .digest("hex");
-
-    await OTP.create({
-
-        email: user.email,
-
-        user: user._id,
-
-        otpHash,
-
-        purpose: "forgot_password",
-
-        expiresAt: new Date(
-            Date.now() + 10 * 60 * 1000
-        )
-    });
-
-    const otpHtmlContent =
-        await OtpHtml(otp);
-
-    await sendEmail.sendEmail(
-        user.email,
-        "Reset Password OTP",
-        "",
-        otpHtmlContent
-    );
-
-    return res.status(200).json({
-        message: "OTP sent successfully"
-    });
 }
+
 async function verifyForgotPasswordOtp(req, res) {
+    try {
+        const { email, otp } = req.body;
 
-    const { email, otp } = req.body;
-
-    const otpHash = crypto
-        .createHash("sha256")
-        .update(otp)
-        .digest("hex");
-
-    const otpDoc = await OTP.findOne({
-
-        email,
-
-        otpHash,
-
-        purpose: "forgot_password",
-
-        expiresAt: {
-            $gt: new Date()
+        if (!email || !otp) {
+            return res.status(400).json({
+                message: "Email and OTP are required"
+            });
         }
-    });
 
-    if (!otpDoc) {
+        const otpHash = crypto
+            .createHash("sha256")
+            .update(otp)
+            .digest("hex");
 
-        return res.status(400).json({
-            message: "Invalid OTP"
+        const otpDoc = await OTP.findOne({
+            email,
+            otpHash,
+            purpose: "forgot_password",
+            expiresAt: {
+                $gt: new Date()
+            }
+        });
+
+        if (!otpDoc) {
+            return res.status(400).json({
+                message: "Invalid OTP"
+            });
+        }
+
+        return res.status(200).json({
+            message: "OTP verified successfully"
+        });
+
+    } catch (error) {
+        return res.status(500).json({
+            message: error.message
         });
     }
-
-    return res.status(200).json({
-        message: "OTP verified successfully"
-    });
 }
+
 async function resetPassword(req, res) {
+    try {
+        const {
+            email,
+            otp,
+            newPassword
+        } = req.body;
 
-    const {
-        email,
-        otp,
-        newPassword
-    } = req.body;
-
-    const otpHash = crypto
-        .createHash("sha256")
-        .update(otp)
-        .digest("hex");
-
-    const otpDoc = await OTP.findOne({
-
-        email,
-
-        otpHash,
-
-        purpose: "forgot_password",
-
-        expiresAt: {
-            $gt: new Date()
+        if (!email || !otp || !newPassword) {
+            return res.status(400).json({
+                message: "Email, OTP and new password are required"
+            });
         }
-    });
 
-    if (!otpDoc) {
+        if (newPassword.length < 6) {
+            return res.status(400).json({
+                message: "Password must be at least 6 characters"
+            });
+        }
 
-        return res.status(400).json({
-            message: "Invalid OTP"
+        const otpHash = crypto
+            .createHash("sha256")
+            .update(otp)
+            .digest("hex");
+
+        const otpDoc = await OTP.findOne({
+            email,
+            otpHash,
+            purpose: "forgot_password",
+            expiresAt: {
+                $gt: new Date()
+            }
+        });
+
+        if (!otpDoc) {
+            return res.status(400).json({
+                message: "Invalid OTP"
+            });
+        }
+
+        const hashedPassword = await bcrypt.hash(
+            newPassword,
+            10
+        );
+
+        await User.findByIdAndUpdate(
+            otpDoc.user,
+            {
+                password: hashedPassword
+            }
+        );
+
+        await sessionModel.deleteMany({
+            user: otpDoc.user
+        });
+
+        await OTP.deleteMany({
+            user: otpDoc.user,
+            purpose: "forgot_password"
+        });
+
+        return res.status(200).json({
+            message: "Password changed successfully"
+        });
+
+    } catch (error) {
+        return res.status(500).json({
+            message: error.message
         });
     }
-    if (!email || !otp || !newPassword) {
-    return res.status(400).json({
-        message: "Email, OTP and new password are required"
-    });
 }
 
-if (newPassword.length < 6) {
-    return res.status(400).json({
-        message: "Password must be at least 6 characters"
-    });
-}
-
-    const hashedPassword =
-        await bcrypt.hash(newPassword, 10);
-
-    await User.findByIdAndUpdate(
-        otpDoc.user,
-        {
-            password: hashedPassword
-        }
-    );
-
-    await sessionModel.deleteMany({
-        user: otpDoc.user
-    });
-
-    await OTP.deleteMany({
-        user: otpDoc.user,
-        purpose: "forgot_password"
-    });
-
-    return res.status(200).json({
-        message: "Password changed successfully"
-    });
-}
-module.exports = { userRegister, userLogin, refreshtoken, getme, logout, logoutAll, verifyEmail, forgotPassword, verifyForgotPasswordOtp, resetPassword }
+module.exports = {
+    userRegister,
+    userLogin,
+    refreshtoken,
+    getme,
+    logout,
+    logoutAll,
+    verifyEmail,
+    forgotPassword,
+    verifyForgotPasswordOtp,
+    resetPassword
+};
